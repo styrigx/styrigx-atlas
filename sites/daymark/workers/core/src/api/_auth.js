@@ -1,7 +1,7 @@
 // workers/core/src/api/_auth.js
 // 接口鉴权：本 Worker 不持任何钥匙，把浏览器带来的 Cookie 头交给主站鉴权网关验
 // （服务绑定 env.AUTH → styrigx-auth-gateway 的 RPC 入口 AuthVerifier，方法 lockSession(cookieHeader)）。
-// 网关用自己的公钥验签锁屏会话（sgx-lock-session）、用 KV 的 epoch 核对，只回结论 {ok, role} / {ok:false, reason}。
+// 网关用自己的公钥验签锁屏会话 Cookie、用 KV 的 epoch 核对，只回结论 {ok, role} / {ok:false, reason}。
 // fail closed：回答格式不对一律当未通过。绑定缺失或网关出错直接抛错（调用方回 500），
 // 不回 401——401 会让前端当成「已锁定」去刷新页面，网关临时故障不该把人踢去锁屏。
 import { err } from './_lib.js';

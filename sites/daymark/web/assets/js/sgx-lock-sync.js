@@ -2,7 +2,7 @@
  * SGX 锁屏同步（L6 前端，不跨层：只做“复查 + 重载”）
  *
  * 主站「立即锁定」后，本页切回前台 / bfcache 恢复时，向服务端确认会话：
- *   GET /api/lock-session-check（主站鉴权网关的子站精确路由直接回答，验 sgx-lock-session）
+ *   GET /api/lock-session-check（主站鉴权网关的子站精确路由直接回答，验锁屏会话 Cookie）
  *   - 200 {ok:true}  → 会话有效，什么都不做
  *   - 401 {ok:false} → 会话已失效 → location.reload()，
  *     让网关走正常 302 到主站锁屏（带 return，解锁后可回来）
