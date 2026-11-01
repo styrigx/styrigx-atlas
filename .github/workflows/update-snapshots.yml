@@ -1,0 +1,63 @@
+name: Update visual snapshots
+# 博客的视觉基线只在 CI 环境生成（与 deploy.yml 同 runner、同版本 Node / Hugo / Chromium + Noto CJK），本地生成的字体渲染不一样。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "要更新基线的分支（不要填 main）"
+        required: true
+permissions:
+  contents: write
+  actions: write # 推完基线后用 GITHUB_TOKEN 触发 deploy.yml
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Refuse main / invalid branch
+        # 分支名只经 env 传进 shell，不拼进脚本；main、refs/heads/main 都拒绝，名字只许常见的分支字符
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          b="${BRANCH#refs/heads/}"
+          if [ -z "$b" ] || [ "$b" = "main" ]; then echo "::error::不要在 main 上更新基线"; exit 1; fi
+          if ! printf '%s' "$b" | grep -Eq '^[A-Za-z0-9._/-]+$' || printf '%s' "$b" | grep -q '\.\.'; then echo "::error::分支名不合法：$b"; exit 1; fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Setup Hugo (styrigx-space shared action; same as deploy.yml)
+        uses: styrigx/styrigx-space/.github/actions/setup-hugo@v1.0.0
+      - name: Setup Node + install dependencies (styrigx-space shared action; same as deploy.yml)
+        uses: styrigx/styrigx-space/.github/actions/setup-node-deps@v1.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Build (three sites + assemble public/)
+        run: npm run build
+      - name: Playwright Chromium + CJK fonts (styrigx-space shared action; same as deploy.yml)
+        uses: styrigx/styrigx-space/.github/actions/setup-playwright@v1.0.0
+        with:
+          cjk-fonts: 'true'
+      - name: Update snapshots
+        working-directory: sites/blog
+        run: npx playwright test --config=playwright.config.js tests/e2e/blog-visual.spec.js --update-snapshots
+      - name: Commit snapshots only
+        id: commit
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add sites/blog/tests/e2e/blog-visual.spec.js-snapshots
+          git diff --cached --quiet && echo "基线无变化" && exit 0
+          git diff --cached --stat
+          git commit --no-verify -m "[UI] CI 更新视觉基线"
+          # checkout 传 ref 是 detached HEAD，没有本地分支和 upstream，裸 git push 会失败；用显式 refspec
+          git push origin "HEAD:refs/heads/${BRANCH#refs/heads/}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+      # GITHUB_TOKEN 的 push 不会触发 deploy.yml，这里显式 dispatch 一次（非 main 分支不部署生产）
+      - name: Trigger CI on the updated branch
+        if: steps.commit.outputs.pushed == 'true'
+        run: gh workflow run deploy.yml --ref "${BRANCH#refs/heads/}"
+        env:
+          BRANCH: ${{ inputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

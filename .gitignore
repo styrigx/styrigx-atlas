@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# 合并后的 Pages 产物（scripts/assemble.mjs）
+/public/
+
+# Hugo 构建产物 / 缓存（各站 sites/<站>/web/）
+sites/*/web/public/
+sites/*/web/resources/
+sites/*/web/.hugo_build.lock
+
+# 构建出的 CSS（Tailwind CLI）
+sites/*/web/assets/css/main.css
+sites/blog/web/assets/css/.tw-out.css
+
+# 博客搜索索引（含私密文章，从不随页面发布）
+search-index.*.json
+
+# test output
+test-results/
+playwright-report/
+sites/*/test-results/
+sites/*/playwright-report/
+
+# logs / env / OS / editor
+npm-debug.log*
+.env
+.env.production
+.DS_Store
+.idea/
+.venv/
+AGENTS.md
