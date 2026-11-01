@@ -1,0 +1,7 @@
+# styrigx-atlas —— 图志的 Cloudflare Pages 配置：只放静态文件（博客、奇趣、日刻三站合成一个产物，见 scripts/assemble.mjs）。
+# 生产不带任何变量、钥匙和数据绑定：页面的会话检查在主站鉴权网关（styrigx-auth-gateway），
+# 奇趣、日刻的接口和 D1 / R2 在各自的接口 Worker（sites/curio/workers/core、sites/daymark/workers/core）。
+# 在仓库根执行：npm run build && wrangler pages deploy public
+name = "styrigx-atlas"
+pages_build_output_dir = "public"
+compatibility_date = "2026-10-20"

@@ -1,0 +1,14 @@
+{
+  "name": "atlas-daymark",
+  "version": "1.0.0",
+  "private": true,
+  "description": "图志 · 日刻（atlas.styrigx.com/daymark/）：Hugo + Tailwind 4 页面 + 接口 Worker styrigx-daymark-core。依赖在仓库根 package.json。",
+  "scripts": {
+    "build:css": "tailwindcss -i web/assets/css/input.css -o web/assets/css/main.css --minify",
+    "build": "npm run build:css && hugo --minify --cleanDestinationDir -s web",
+    "shell:sync": "node scripts/sync-shell.mjs",
+    "shell:check": "node scripts/sync-shell.mjs --check",
+    "test": "node --test tests/web/*.test.mjs tests/workers/*.test.mjs",
+    "test:e2e": "playwright test --config=tests/config/playwright.e2e.config.js"
+  }
+}

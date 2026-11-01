@@ -1,0 +1,16 @@
+node_modules
+package-lock.json
+public
+sites/*/web/public
+sites/*/web/resources
+sites/*/web/assets/css/main.css
+# 共享外壳供应商副本（各站 scripts/sync-shell.mjs 写入，和主站逐字一致）
+sites/blog/web/assets/css/sgx-shell.css
+sites/*/web/assets/js/sgx/shell
+sites/blog/web/data/sgx-shell
+sites/*/web/assets/sgx-shell
+# Hugo 模板（Go template，prettier 不认）
+sites/*/web/layouts
+
+# Preserve author-chosen frontmatter quote style in content files.
+sites/*/web/content/**/*.md
