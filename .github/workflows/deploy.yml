@@ -1,0 +1,351 @@
+name: Build and Deploy (atlas Pages + curio / daymark core)
+
+# 同一分支推新提交时取消旧的 PR CI；main 的部署永不取消（排队按顺序跑：D1 迁移 / core / Pages / KV 索引不会交错，也不会被旧提交盖掉）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# GITHUB_TOKEN 默认只读；本工作流不推代码、不发评论、不建 release
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  # 所有 wrangler（npx 和 wrangler-action）用同一个固定版本，和主站 styrigx-space 一致；升级时只改这里
+  WRANGLER_VERSION: '4.152.0'
+
+# 图志 = 博客 + 奇趣 + 日刻，一个域名 atlas.styrigx.com，三站在 /blog/、/curio/、/daymark/ 下：
+#   Pages styrigx-atlas      三站合成的一份静态产物（scripts/assemble.mjs → public/），页面会话检查在主站鉴权网关
+#   Worker styrigx-curio-core    atlas.styrigx.com/curio/api/*   （sites/curio/workers/core，D1 + R2）
+#   Worker styrigx-daymark-core  atlas.styrigx.com/daymark/api/* （sites/daymark/workers/core，D1）
+# 构建环境（Hugo 版本与 extended、Node + npm ci、Playwright 浏览器 / CJK 字体缓存）用主站 styrigx-space 的共享 composite action，
+# 按固定 tag 引用（不跟主站 main）；Renovate 在 styrigx-space 发新 tag 后开 PR 升级。部署 job 不用共享 action：密钥和 environment 只出现在本文件里。
+jobs:
+  # 作业名 build-and-deploy（规则集 protect-main 的必需检查按这个名字认）
+  build-and-deploy:
+    # 固定 runner 大版本：ubuntu-latest 换大版本时系统库 / 字体会变（视觉基线跟着 update-snapshots.yml 一起在同一个 runner 上生成）
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert zero-key layout
+        # 本仓库不持任何钥匙：页面会话在主站鉴权网关验，接口 Worker 经服务绑定问网关。
+        # 仓库里不许有 Pages Functions，不许出现钥匙变量名或会话验签代码。
+        run: |
+          set -u
+          for d in functions root/functions sites/blog/web/functions sites/curio/web/functions sites/daymark/web/functions; do
+            if [ -e "$d" ]; then echo "FAIL: Pages Functions must not exist ($d)"; exit 1; fi
+          done
+          # SGX_[A-Z0-9_]*(…)：连 SGX_PW_PEPPER、SGX_CHAT_API_KEY、SGX_ROOT_KEY 这类名字一起拦
+          if grep -rn -E "SGX_[A-Z0-9_]*(PUBLIC|PRIVATE|KEY|PEPPER)|SGX_ED25519_|SGX_STEPUP_|sgx-lock-session" \
+               --include="*.js" --include="*.mjs" --include="*.ts" --include="*.toml" --include="*.html" \
+               root/ sites/*/web/static sites/*/web/assets sites/*/web/layouts sites/*/workers scripts/ sites/*/scripts 2>/dev/null; then
+            echo "FAIL: atlas must not hold keys or verify sessions"; exit 1
+          fi
+          echo "OK: zero-key layout."
+
+      - name: Setup Hugo (styrigx-space shared action; version + extended defined there)
+        uses: styrigx/styrigx-space/.github/actions/setup-hugo@v1.0.0
+
+      - name: Setup Node + install dependencies (styrigx-space shared action, npm cache)
+        # Node 版本看 .nvmrc（22 取最新小版本：测试里用 node:sqlite 真跑 D1 的 SQL，22.13.0 起才不用实验开关）；npm ci 装根 package.json（三站 workspace 共用一份 lockfile）
+        uses: styrigx/styrigx-space/.github/actions/setup-node-deps@v1.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Shared shell copies match the pinned main-site commit (sites/*/scripts/sync-shell.mjs --check)
+        # 色彩角色 / 顶栏材质 / 导航抽屉 / 自定义主题色引擎来自主站 styrigx-space web/shared/shell，主站是唯一来源：
+        # 副本被手改，或和各站 sgx-shell.lock.json 锁定的主站提交对不上 → 红。主站 main 上外壳更新了只打 notice，不变红；
+        # 升级外壳：在 sites/<站>/ 下 node scripts/sync-shell.mjs（锁定到主站 main 当时的提交）后提交
+        run: npm run shell:check
+
+      - name: Curio seed migration in sync with data/seed.json
+        working-directory: sites/curio
+        run: node scripts/gen-seed-sql.mjs --check
+
+      - name: Blog code token colours are up to date
+        working-directory: sites/blog
+        run: node scripts/gen-code-tokens.mjs --check
+
+      - name: Build (three sites + assemble public/)
+        # 各站 Tailwind CLI 构建 CSS → hugo --minify -s web → sites/<站>/web/public/；scripts/assemble.mjs 合成 public/（root/ + /blog/ /curio/ /daymark/）
+        run: npm run build
+
+      - name: Blog search index builds (site:blog)
+        # 博客自己写全站搜索索引（styrigx-search-index 读 KV site:blog）：标题 + 描述 + 正文纯文本，private 文章标 private。
+        # 每个分支都跑：网址和构建产物对不上 / 0 篇文章 → 红。文件写到 RUNNER_TEMP，不进 public（不随 Pages 发出去）。
+        working-directory: sites/blog
+        run: node scripts/build-search-index.mjs --out "$RUNNER_TEMP/search-index.blog.json"
+
+      - name: Unit tests
+        # 根：图志 Pages（_worker.js / _headers / _redirects / 合成产物）；各站：网址 / 模板 / 锁屏同步 / 外观继承 / 接口 Worker（node:sqlite 真跑 SQL）/ 搜索索引
+        run: npm test
+
+      - name: core bundle check (dry-run, curio)
+        # npx 在 npm workspaces 里会切到所属 workspace 的根（sites/<站>/）执行，wrangler 找不到 core 的配置；所有 wrangler 调用都用 --config 指绝对路径
+        working-directory: sites/curio/workers/core
+        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/curio-core-dist" --config "$GITHUB_WORKSPACE/sites/curio/workers/core/wrangler.toml"
+
+      - name: core bundle check (dry-run, daymark)
+        working-directory: sites/daymark/workers/core
+        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/daymark-core-dist" --config "$GITHUB_WORKSPACE/sites/daymark/workers/core/wrangler.toml"
+
+      - name: Playwright Chromium + CJK fonts (styrigx-space shared action, cached)
+        # 浏览器按 lockfile 的 @playwright/test 版本缓存；fonts-noto-cjk 给博客视觉回归用
+        uses: styrigx/styrigx-space/.github/actions/setup-playwright@v1.0.0
+        with:
+          cjk-fonts: 'true'
+
+      - name: Playwright (blog behaviour + visual regression, curio / daymark phone E2E)
+        # 都对着合成后的 public/（scripts/serve-static.mjs 模拟 Pages），地址带各站前缀
+        run: npm run test:e2e
+
+      - name: Check no unversioned /js/ refs in build output
+        run: |
+          refs=$(grep -rhoE 'src="?/(blog|curio|daymark)/js/[a-zA-Z0-9_./-]+\.js' public/ 2>/dev/null | sort -u || true)
+          bad=$(echo "$refs" | grep -vE '\.[0-9a-f]{8,}\.(js|mjs)$' | grep -v '^$' || true)
+          if [ -n "$bad" ]; then
+            echo "ERROR: Found unversioned /js/ refs in build output:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: all /js/ refs are fingerprinted."
+
+      - name: Check no image files outside /blog/ in build output
+        # 图片一律要过会话（2026-10-29）：Pages 不验会话，所以奇趣、日刻和域名根上一张图片都不许有；
+        # 图片只能从接口 Worker 的 /<站>/api/* 出（先问网关会话）。root/_worker.js 运行时也会把 /blog/ 以外像图片的回答一律 404。
+        run: |
+          bad=$(find public -type f ! -path 'public/blog/*' | grep -iE '\.(png|apng|jpe?g|jfif|pjpeg|pjp|gif|webp|avif|svgz?|ico|cur|bmp|tiff?|heic|heif|jxl)$' || true)
+          if [ -n "$bad" ]; then
+            echo "ERROR: image files outside /blog/ in build output (images must go through a session-checked /<site>/api/* endpoint):"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: no image files outside /blog/."
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results
+          path: |
+            sites/*/test-results/
+            sites/*/playwright-report/
+
+      - name: Upload site build (main push only)
+        # 部署 job 直接用这份产物，不重建、不 npm ci、不跑 Playwright
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-public
+          path: public
+          retention-days: 1
+          if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Upload blog search index (main push only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-index
+          path: ${{ runner.temp }}/search-index.blog.json
+          retention-days: 1
+          if-no-files-found: error
+
+  # 网关闸门（不碰任何钥匙）：Pages 没有验票代码、core 要经服务绑定问网关，所以主站鉴权网关必须先接管 atlas.styrigx.com。
+  # 域名还没解析（Pages 自定义域名要等项目建好、网关登记后再绑）→ 页面不对外，放行；
+  # 解析了 → 三站首页未登录必须是网关回的 302（X-SGX-Runtime: worker），/api/lock-session-check 未登录必须是网关回的 401。不满足就什么都不部署。
+  gate:
+    needs: build-and-deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      live: ${{ steps.dns.outputs.live }}
+    steps:
+      - name: Is atlas.styrigx.com resolvable
+        id: dns
+        run: |
+          if getent hosts atlas.styrigx.com >/dev/null; then echo "live=true" >> "$GITHUB_OUTPUT"; else echo "live=false" >> "$GITHUB_OUTPUT"; echo "atlas.styrigx.com not resolvable yet: skip gate"; fi
+
+      - name: Gate check - gateway must already guard atlas pages and answer /api/lock-session-check
+        if: steps.dns.outputs.live == 'true'
+        run: |
+          set -u
+          ok=0
+          probe() { # url 期望状态码
+            hdr=$(curl -sS -o /dev/null -D - -w 'HTTP_CODE:%{http_code}\n' "$1" | tr -d '\r' || true)
+            code=$(printf '%s' "$hdr" | sed -n 's/^HTTP_CODE://p')
+            rt=$(printf '%s' "$hdr" | awk -F': ' 'tolower($1)=="x-sgx-runtime"{print $2}')
+            echo "$1 -> $code runtime=${rt:-none}"
+            [ "$code" = "$2" ] && [ "$rt" = "worker" ] || { echo "::error::$1 expected $2 from the gateway; deploy the main-site gateway (atlas.styrigx.com routes) first"; return 1; }
+          }
+          for s in blog curio daymark; do probe "https://atlas.styrigx.com/$s/" 302 || ok=1; done
+          probe https://atlas.styrigx.com/api/lock-session-check 401 || ok=1
+          exit $ok
+
+  # 只在 main 推送时部署，测试 job 不碰任何钥匙。命名一一对应：Cloudflare token 名 = GitHub 环境名 = 环境密钥名（大写、横线换下划线）
+  #   styrigx-curio-core-deploy    -> STYRIGX_CURIO_CORE_DEPLOY     奇趣 core 的 D1 迁移 + 部署（环境密钥，环境只允许 main）
+  #   styrigx-daymark-core-deploy  -> STYRIGX_DAYMARK_CORE_DEPLOY   日刻 core 的 D1 迁移 + 部署（环境密钥，环境只允许 main）
+  #   styrigx-atlas-pages-deploy   -> STYRIGX_ATLAS_PAGES_DEPLOY    Pages styrigx-atlas + KV styrigx-search-index 的 site:blog（仓库级密钥：只能推静态页面和博客索引，不碰数据）
+  # CLOUDFLARE_ACCOUNT_ID 不是钥匙，留在仓库级。
+  deploy-curio-core:
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: STYRIGX_CURIO_CORE_DEPLOY
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_CURIO_CORE_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: sites/curio/workers/core
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: d1 migrations apply styrigx-curio-core --remote --config ${{ github.workspace }}/sites/curio/workers/core/wrangler.toml
+
+      - name: Deploy styrigx-curio-core
+        # 路由 atlas.styrigx.com/curio/api/* 比网关的页面路由更精确，接口直接落到本 Worker
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_CURIO_CORE_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: sites/curio/workers/core
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: deploy --config ${{ github.workspace }}/sites/curio/workers/core/wrangler.toml
+
+  deploy-daymark-core:
+    needs: gate
+    runs-on: ubuntu-24.04
+    environment: STYRIGX_DAYMARK_CORE_DEPLOY
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_DAYMARK_CORE_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: sites/daymark/workers/core
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: d1 migrations apply styrigx-daymark-core --remote --config ${{ github.workspace }}/sites/daymark/workers/core/wrangler.toml
+
+      - name: Deploy styrigx-daymark-core
+        # 路由 atlas.styrigx.com/daymark/api/* 比网关的页面路由更精确，接口直接落到本 Worker
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_DAYMARK_CORE_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: sites/daymark/workers/core
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: deploy --config ${{ github.workspace }}/sites/daymark/workers/core/wrangler.toml
+
+  # 先部署两个接口 Worker，再部署 Pages；Pages 部署 job 不 npm ci、不跑任何仓库依赖代码，只拿 build-and-deploy 的产物。
+  # 顺序：Pages → KV 博客索引 → 冒烟。KV 写失败时页面已上线、搜索还是旧索引（只会搜不到新文章，不会搜出打不开的页面），job 报红，不回滚。
+  deploy-pages:
+    needs: [gate, deploy-curio-core, deploy-daymark-core]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        # 只为根上的 wrangler.toml（Pages 项目配置）；不 npm ci
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download site build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-public
+          path: public
+
+      - name: Download blog search index
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: search-index
+          path: ${{ runner.temp }}
+
+      - name: Deploy to Cloudflare Pages (styrigx-atlas)
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_ATLAS_PAGES_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: pages deploy public --project-name=styrigx-atlas --commit-dirty=true
+
+      - name: Upload blog search index to KV (site:blog)
+        # 和 Pages 部署同一个令牌（STYRIGX_ATLAS_PAGES_DEPLOY 带「Workers KV Storage: Edit」）。
+        # 命名空间 styrigx-search-index（主站 styrigx-space 的搜索 Worker 读它）；site:curio / site:daymark 由各自的 core Worker 自己写。
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.STYRIGX_ATLAS_PAGES_DEPLOY }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: kv key put site:blog --path=${{ runner.temp }}/search-index.blog.json --namespace-id=bd1babcc3fe74d58994e254c74d34ced --remote
+
+      - name: Smoke test (pages behind the gateway, APIs on the core Workers, static files direct, no images, pages.dev not open)
+        # 只发不带 cookie 的只读请求。域名没解析（还没绑 Pages 自定义域名）就只查 pages.dev。
+        env:
+          LIVE: ${{ needs.gate.outputs.live }}
+        run: |
+          set -u
+          ok=0
+          probe() { # url 期望状态码 标记头 期望值(worker|none)
+            for i in 1 2 3 4 5 6; do
+              hdr=$(curl -sS -o /dev/null -D - -w 'HTTP_CODE:%{http_code}\n' "$1" | tr -d '\r' || true)
+              code=$(printf '%s' "$hdr" | sed -n 's/^HTTP_CODE://p')
+              rt=$(printf '%s' "$hdr" | awk -F': ' -v h="$(echo "$3" | tr A-Z a-z)" 'tolower($1)==h{print $2}')
+              echo "$1 -> $code $3=${rt:-none} (try $i)"
+              if [ "$code" = "$2" ] && [ "${rt:-none}" = "$4" ]; then return 0; fi
+              sleep 5
+            done
+            echo "::error::$1 expected $2 with $3=$4"; return 1
+          }
+          if [ "$LIVE" = "true" ]; then
+            A=https://atlas.styrigx.com
+            # 每站产物里每个一级页面目录各抽一个页面：未登录必须是网关回的 302（新目录没被网关接管 → 红）
+            for s in blog curio daymark; do
+              paths=$(cd "public/$s" && find . -name '*.html' ! -name '404.html' | sed 's|^\.||; s|index\.html$||' | awk -F/ '{k=($2==""?"/":$2); if(!(k in seen)){seen[k]=1; print}}')
+              for p in $paths; do probe "$A/$s$p" 302 X-SGX-Runtime worker || ok=1; done
+              css=$(cd "public/$s" && find css -name '*.css' | head -1)
+              if [ -n "$css" ]; then probe "$A/$s/$css" 200 X-SGX-Runtime none || ok=1; else echo "::error::no css/*.css in public/$s"; ok=1; fi
+            done
+            for p in /blog/rss.xml /blog/sitemap-index.xml /curio/sitemap.xml /daymark/sitemap.xml; do probe "$A$p" 302 X-SGX-Runtime worker || ok=1; done
+            # 接口：未登录 401，由各自的 core Worker 回答；/daymark/api/today 公开；锁屏复查是网关
+            probe "$A/curio/api/links" 401 X-Curio-Runtime worker || ok=1
+            probe "$A/curio/api/icon?id=1" 401 X-Curio-Runtime worker || ok=1
+            probe "$A/curio/api/photo?kind=device&id=1" 401 X-Curio-Runtime worker || ok=1
+            probe "$A/daymark/api/quotes" 401 X-Daymark-Runtime worker || ok=1
+            probe "$A/daymark/api/today" 200 X-Daymark-Runtime worker || ok=1
+            probe "$A/api/lock-session-check" 401 X-SGX-Runtime worker || ok=1
+            # 图片一律要过会话：/blog/ 以外没会话取图片路径不得拿到图片（网关对图片后缀直接回源 → Pages 的 _worker.js 回 404；网关以后改成验会话时是 302）
+            for p in /curio/sgx-image-probe.png /daymark/sgx-image-probe.png /sgx-image-probe.png; do
+              hdr=$(curl -sS -o /dev/null -D - -w 'HTTP_CODE:%{http_code}\n' "$A$p" | tr -d '\r' || true)
+              code=$(printf '%s' "$hdr" | sed -n 's/^HTTP_CODE://p')
+              ct=$(printf '%s' "$hdr" | awk -F': ' 'tolower($1)=="content-type"{print $2}')
+              echo "$p -> $code ${ct:-no-type}"
+              case "$code" in 404|302) ;; *) echo "::error::$p without session answered $code"; ok=1 ;; esac
+              case "$ct" in image/*) echo "::error::$p without session returned an image"; ok=1 ;; esac
+            done
+          else
+            echo "atlas.styrigx.com not resolvable yet: only pages.dev is checked"
+          fi
+          # pages.dev 不得公开：要么 301 到正式域名（root/_worker.js），要么被 Zero Trust Access 拦
+          hdr=$(curl -sS -o /dev/null -D - -w 'HTTP_CODE:%{http_code}\n' https://styrigx-atlas.pages.dev/blog/ | tr -d '\r' || true)
+          code=$(printf '%s' "$hdr" | sed -n 's/^HTTP_CODE://p')
+          loc=$(printf '%s' "$hdr" | awk -F': ' 'tolower($1)=="location"{print $2}')
+          echo "pages.dev /blog/ -> $code $loc"
+          case "$code $loc" in
+            "301 https://atlas.styrigx.com/blog/") ;;
+            "302 https://styrigx.cloudflareaccess.com/"*) ;;
+            *) echo "::error::pages.dev is neither redirected to atlas.styrigx.com nor behind Cloudflare Access"; ok=1 ;;
+          esac
+          exit $ok

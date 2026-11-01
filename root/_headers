@@ -1,0 +1,19 @@
+# 图志三站的静态资源缓存（Pages 只放静态文件，会话检查在主站鉴权网关；_headers 对这些静态资源生效）。
+# /js/ /css/ 下由 Hugo Pipes 生成的文件名都带内容哈希（CI 检查构建产物里没有未指纹化的 /js/ 引用），长期缓存。
+/blog/css/*
+  Cache-Control: public, max-age=31536000, immutable
+/blog/js/*
+  Cache-Control: public, max-age=31536000, immutable
+# 博客字体文件名不带指纹，缓存一周
+/blog/fonts/*
+  Cache-Control: public, max-age=604800
+
+/curio/css/*
+  Cache-Control: public, max-age=31536000, immutable
+/curio/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/daymark/css/*
+  Cache-Control: public, max-age=31536000, immutable
+/daymark/js/*
+  Cache-Control: public, max-age=31536000, immutable

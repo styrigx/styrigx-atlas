@@ -1,0 +1,17 @@
+{
+  "name": "atlas-blog",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "图志 · 博客（atlas.styrigx.com/blog/）：Hugo + Tailwind 4，中英双语。依赖在仓库根 package.json。",
+  "scripts": {
+    "build:css": "node scripts/build-css.mjs",
+    "build": "node scripts/build-css.mjs && hugo --minify --cleanDestinationDir -s web",
+    "dev": "node scripts/build-css.mjs --no-minify && hugo server -s web",
+    "shell:sync": "node scripts/sync-shell.mjs",
+    "shell:check": "node scripts/sync-shell.mjs --check",
+    "code-tokens": "node scripts/gen-code-tokens.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test --config=playwright.config.js"
+  }
+}
