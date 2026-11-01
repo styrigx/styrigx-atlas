@@ -91,12 +91,13 @@ jobs:
         run: npm test
 
       - name: core bundle check (dry-run, curio)
+        # npx 在 npm workspaces 里会切到所属 workspace 的根（sites/<站>/）执行，wrangler 找不到 core 的配置；所有 wrangler 调用都用 --config 指绝对路径
         working-directory: sites/curio/workers/core
-        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/curio-core-dist"
+        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/curio-core-dist" --config "$GITHUB_WORKSPACE/sites/curio/workers/core/wrangler.toml"
 
       - name: core bundle check (dry-run, daymark)
         working-directory: sites/daymark/workers/core
-        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/daymark-core-dist"
+        run: npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run --outdir "$RUNNER_TEMP/daymark-core-dist" --config "$GITHUB_WORKSPACE/sites/daymark/workers/core/wrangler.toml"
 
       - name: Playwright Chromium + CJK fonts (styrigx-space shared action, cached)
         # 浏览器按 lockfile 的 @playwright/test 版本缓存；fonts-noto-cjk 给博客视觉回归用
@@ -211,7 +212,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: sites/curio/workers/core
           wranglerVersion: ${{ env.WRANGLER_VERSION }}
-          command: d1 migrations apply styrigx-curio-core --remote
+          command: d1 migrations apply styrigx-curio-core --remote --config ${{ github.workspace }}/sites/curio/workers/core/wrangler.toml
 
       - name: Deploy styrigx-curio-core
         # 路由 atlas.styrigx.com/curio/api/* 比网关的页面路由更精确，接口直接落到本 Worker
@@ -221,7 +222,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: sites/curio/workers/core
           wranglerVersion: ${{ env.WRANGLER_VERSION }}
-          command: deploy
+          command: deploy --config ${{ github.workspace }}/sites/curio/workers/core/wrangler.toml
 
   deploy-daymark-core:
     needs: gate
@@ -238,7 +239,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: sites/daymark/workers/core
           wranglerVersion: ${{ env.WRANGLER_VERSION }}
-          command: d1 migrations apply styrigx-daymark-core --remote
+          command: d1 migrations apply styrigx-daymark-core --remote --config ${{ github.workspace }}/sites/daymark/workers/core/wrangler.toml
 
       - name: Deploy styrigx-daymark-core
         # 路由 atlas.styrigx.com/daymark/api/* 比网关的页面路由更精确，接口直接落到本 Worker
@@ -248,7 +249,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: sites/daymark/workers/core
           wranglerVersion: ${{ env.WRANGLER_VERSION }}
-          command: deploy
+          command: deploy --config ${{ github.workspace }}/sites/daymark/workers/core/wrangler.toml
 
   # 先部署两个接口 Worker，再部署 Pages；Pages 部署 job 不 npm ci、不跑任何仓库依赖代码，只拿 build-and-deploy 的产物。
   # 顺序：Pages → KV 博客索引 → 冒烟。KV 写失败时页面已上线、搜索还是旧索引（只会搜不到新文章，不会搜出打不开的页面），job 报红，不回滚。
