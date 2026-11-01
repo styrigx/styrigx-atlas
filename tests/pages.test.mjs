@@ -158,13 +158,15 @@ test('assemble：root/ 在根上，三站在 /<站>/ 下；站内产物带了根
   if (!built) return; // 没构建（只跑单测）时跳过；CI 先 npm run build
   const out = path.join(mkdtempSync(path.join(tmpdir(), 'atlas-public-')), 'public');
   assemble(out);
-  for (const f of ['_worker.js', '_headers', '_redirects', 'robots.txt', '404.html']) assert.ok(existsSync(path.join(out, f)), f);
+  for (const f of ['_worker.js', '_headers', '_redirects', 'robots.txt', '404.html', 'index.html']) assert.ok(existsSync(path.join(out, f)), f);
   for (const s of ['blog', 'curio', 'daymark']) {
     assert.ok(existsSync(path.join(out, s, 'index.html')), s);
     assert.ok(existsSync(path.join(out, s, 'en/index.html')), s + ' en');
     assert.ok(existsSync(path.join(out, s, '404.html')), s + ' 404');
   }
-  assert.equal(existsSync(path.join(out, 'index.html')), false, '域名根没有首页');
+  /* 域名根有首页：三个站的入口都在上面 */
+  const home = readFileSync(path.join(out, 'index.html'), 'utf8');
+  for (const s of ['blog', 'curio', 'daymark']) assert.ok(home.includes(`href="/${s}/"`), '首页缺 ' + s);
   /* 页面里的站内地址都带本站前缀 */
   for (const s of ['blog', 'curio', 'daymark']) {
     const html = readFileSync(path.join(out, s, 'index.html'), 'utf8');
