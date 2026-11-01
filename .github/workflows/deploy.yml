@@ -57,7 +57,7 @@ jobs:
         uses: styrigx/styrigx-space/.github/actions/setup-hugo@v1.0.0
 
       - name: Setup Node + install dependencies (styrigx-space shared action, npm cache)
-        # Node 版本看 .nvmrc（22：测试里用 node:sqlite 真跑 D1 的 SQL）；npm ci 装根 package.json（三站 workspace 共用一份 lockfile）
+        # Node 版本看 .nvmrc（22 取最新小版本：测试里用 node:sqlite 真跑 D1 的 SQL，22.13.0 起才不用实验开关）；npm ci 装根 package.json（三站 workspace 共用一份 lockfile）
         uses: styrigx/styrigx-space/.github/actions/setup-node-deps@v1.0.0
         with:
           node-version-file: .nvmrc
