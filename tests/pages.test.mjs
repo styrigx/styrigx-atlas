@@ -152,21 +152,26 @@ test('接口 Worker 只挂图志下本站的 /api/*', () => {
   }
 });
 
-test('assemble：root/ 在根上，三站在 /<站>/ 下；站内产物带了根文件就报错', async () => {
+test('assemble：root/ 在根上，三站 + 根站首页在对应位置；站内产物带了根文件就报错', async () => {
   const { assemble } = await import(pathToFileURL(path.join(REPO, 'scripts/assemble.mjs')).href);
-  const built = ['blog', 'curio', 'daymark'].every((s) => existsSync(path.join(REPO, 'sites', s, 'web/public/index.html')));
+  const built = ['blog', 'curio', 'daymark', 'root'].every((s) => existsSync(path.join(REPO, 'sites', s, 'web/public/index.html')));
   if (!built) return; // 没构建（只跑单测）时跳过；CI 先 npm run build
   const out = path.join(mkdtempSync(path.join(tmpdir(), 'atlas-public-')), 'public');
   assemble(out);
-  for (const f of ['_worker.js', '_headers', '_redirects', 'robots.txt', '404.html', 'index.html']) assert.ok(existsSync(path.join(out, f)), f);
+  for (const f of ['_worker.js', '_headers', '_redirects', 'robots.txt', '404.html']) assert.ok(existsSync(path.join(out, f)), f);
   for (const s of ['blog', 'curio', 'daymark']) {
     assert.ok(existsSync(path.join(out, s, 'index.html')), s);
     assert.ok(existsSync(path.join(out, s, 'en/index.html')), s + ' en');
     assert.ok(existsSync(path.join(out, s, '404.html')), s + ' 404');
   }
-  /* 域名根有首页：三个站的入口都在上面 */
+  /* 域名根首页来自根站 Hugo 构建：/ 和 /en/ 都有，三个站的入口都在上面，不链到 /root/ */
   const home = readFileSync(path.join(out, 'index.html'), 'utf8');
-  for (const s of ['blog', 'curio', 'daymark']) assert.ok(home.includes(`href="/${s}/"`), '首页缺 ' + s);
+  const homeEn = readFileSync(path.join(out, 'en', 'index.html'), 'utf8');
+  for (const s of ['blog', 'curio', 'daymark']) {
+    assert.match(home, new RegExp('href=["\']?/' + s + '/'), '首页缺 ' + s);
+    assert.match(homeEn, new RegExp('href=["\']?/' + s + '/en/'), '英文首页缺 ' + s);
+  }
+  assert.doesNotMatch(home, /href=["']?\/root\//, '首页不该链到 /root/');
   /* 页面里的站内地址都带本站前缀 */
   for (const s of ['blog', 'curio', 'daymark']) {
     const html = readFileSync(path.join(out, s, 'index.html'), 'utf8');

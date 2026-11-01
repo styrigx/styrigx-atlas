@@ -1,0 +1,29 @@
+{{ define "main" }}
+{{ $isEn := eq .Lang "en" }}
+<main class="root-wrap">
+  <h1 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">{{ if $isEn }}Atlas{{ else }}图志{{ end }}</h1>
+  <ul class="root-cards">
+    <li>
+      <a class="root-card" href="{{ if $isEn }}/blog/en/{{ else }}/blog/{{ end }}">
+        <h2 class="root-card-title">{{ if $isEn }}Blog{{ else }}博客{{ end }}<span>Blog</span></h2>
+        <p class="root-card-desc">{{ if $isEn }}AI tool practice, open-source retrospectives, personal infrastructure notes.{{ else }}AI 工具实战、开源项目复盘、个人基础设施笔记。{{ end }}</p>
+      </a>
+    </li>
+    <li>
+      <a class="root-card" href="{{ if $isEn }}/curio/en/{{ else }}/curio/{{ end }}">
+        <h2 class="root-card-title">{{ if $isEn }}Curio{{ else }}奇趣{{ end }}<span>Curio</span></h2>
+        <p class="root-card-desc">{{ if $isEn }}Good things found on the web, kept one by one: collections, devices, games.{{ else }}网上偶然遇到、想留下的好东西：收藏、设备、游戏。{{ end }}</p>
+      </a>
+    </li>
+    <li>
+      <a class="root-card" href="{{ if $isEn }}/daymark/en/{{ else }}/daymark/{{ end }}">
+        <h2 class="root-card-title">{{ if $isEn }}Daymark{{ else }}日刻{{ end }}<span>Daymark</span></h2>
+        <p class="root-card-desc">{{ if $isEn }}One memorable sentence, carved every day.{{ else }}每天刻下一句值得记住的话。{{ end }}</p>
+      </a>
+    </li>
+  </ul>
+  <footer class="root-foot">
+    <a href="{{ if $isEn }}https://styrigx.com/en/{{ else }}https://styrigx.com{{ end }}">← {{ if $isEn }}Space{{ else }}主站 styrigx.com{{ end }}</a>
+  </footer>
+</main>
+{{ end }}
