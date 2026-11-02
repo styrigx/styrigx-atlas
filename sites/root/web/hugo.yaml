@@ -1,0 +1,29 @@
+title: '图志'
+# 图志域名根：中文 /，英文 /en/（三站都在 /<站>/、/<站>/en/ 下）
+baseURL: 'https://atlas.styrigx.com/'
+defaultContentLanguage: zh
+defaultContentLanguageInSubdir: false
+hasCJKLanguage: true
+languages:
+  zh:
+    label: 中文
+    weight: 1
+  en:
+    label: English
+    weight: 2
+theme: []
+
+# robots.txt 只有图志根上的一份 root/robots.txt（Disallow: /，整个 atlas.styrigx.com 共用）
+enableRobotsTXT: false
+enableEmoji: true
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+
+params:
+  description: 'Sloan Gray 的图志：博客、奇趣、日刻'
+  version: '1.0.0'
+
+disableKinds: ['taxonomy', 'term', 'rss', 'section']

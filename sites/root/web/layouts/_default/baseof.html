@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+{{ $isEn := eq .Lang "en" }}
+{{/* 自定义主题色引擎（共享外壳 palette-scheme.js）：只在 cookie 是自定义色且本站还没缓存时，由共享读端 SgxUI.apply 的 onMiss 按需加载 */}}
+{{ $shellAccent := resources.Get "js/sgx/shell-accent.js" | js.Build (dict "format" "iife" "minify" true "target" "es2018") | fingerprint }}
+<html lang="{{ if $isEn }}en{{ else }}zh{{ end }}" class="scroll-smooth" data-sgx-accent-js="{{ $shellAccent.RelPermalink }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f5f8fa">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#10151a">
+<title>{{ if .IsHome }}{{ if $isEn }}Atlas{{ else }}图志{{ end }}{{ else }}{{ .Title }} | {{ if $isEn }}Atlas{{ else }}图志{{ end }}{{ end }}</title>
+<meta name="description" content="{{ if $isEn }}Sloan Gray's Atlas: blog, curio and daymark, one domain{{ else }}{{ .Site.Params.description }}{{ end }}">
+<meta name="robots" content="noindex">
+{{/* 标签页图标、主屏图标都用主站头像 */}}
+<link rel="icon" href="https://styrigx.com/avatar/32.webp">
+<link rel="apple-touch-icon" href="https://styrigx.com/avatar/192.webp">
+{{/* 外观 + 语言预读（渲染前）——继承主站 sgx-ui cookie 的深浅色、调色板、强调色、字体大小、减弱动效和语言；
+     没有 cookie 时跟系统（根站没有自己的开关） */}}
+{{/* 共享外壳读端 ui-cookie-read.js（主站唯一来源，sync-shell 同步，勿手改）原样内联，挂 window.SgxUI；紧跟 ui-inherit-run.js 调 SgxUI.apply */}}
+<script>{{ (resources.Get "js/sgx/shell/ui-cookie-read.js" | minify).Content | safeJS }}</script>
+<script>{{ (resources.Get "js/sgx/ui-inherit-run.js" | js.Build (dict "format" "iife" "minify" true "target" "es2018")).Content | safeJS }}</script>
+<script>
+/* 布局模式：<980 手机 / ≥980 DeX（沿用主站断点） */
+function __layoutMode(){
+  var m=null;
+  try{m=localStorage.getItem('sgx-layout')}catch(e){}
+  if(m==='phone'||m==='dex')return m;
+  var w=window.innerWidth||1280;
+  return w<980?'phone':'dex';
+}
+function __applyLayout(){
+  var d=document.documentElement,m=__layoutMode();
+  d.classList.remove('layout-phone','layout-dex');
+  d.classList.add('layout-'+m);
+}
+__applyLayout();
+</script>
+<link rel="stylesheet" href="{{ (resources.Get "css/main.css" | minify | fingerprint).RelPermalink }}">
+</head>
+<body class="text-m-on-surface font-sans antialiased">
+<div id="sgx-wallpaper" aria-hidden="true"></div>
+{{/* 顶栏：左圆九宫格（导航抽屉）· 中间长条只显示「图志」· 右圆快捷面板。
+   头像在导航抽屉头（链主站）。外观和语言跟主站（sgx-ui cookie，见 ui-inherit-run.js）。 */}}
+<header id="site-nav">
+  <div class="sgx-topbar">
+    <button type="button" class="sgx-tb-nav" aria-label="{{ if $isEn }}Navigation{{ else }}导航{{ end }}" aria-haspopup="dialog" aria-controls="sgx-drawer" aria-expanded="false">{{ index (resources.Get "sgx-shell/nav.json" | transform.Unmarshal).icons "apps-grid" | safeHTML }}</button>
+    <div class="sgx-tb-pill">
+      <span class="sgx-tb-title">{{ if $isEn }}Atlas{{ else }}图志{{ end }}</span>
+    </div>
+    <button type="button" class="sgx-tb-end sgx-tb-qp" data-sgx-qp aria-label="{{ if $isEn }}Quick panel{{ else }}快捷面板{{ end }}" aria-haspopup="dialog" aria-controls="sgx-qp" aria-expanded="false">{{ partial "icon.html" "sliders" }}</button>
+  </div>
+</header>
+
+{{/* 导航抽屉（主站共享外壳同一份，topbar.js 开关）：项和图标来自 assets/sgx-shell/nav.json，样式
+   来自 input.css 的 @sgx-shell 段，都由 scripts/sync-shell.mjs 从主站同步，勿手改。
+   根站不是任何子站，没有当前项；三站一律走图志绝对地址（见 partial shell-nav-href.html）。 */}}
+{{ $shellNav := resources.Get "sgx-shell/nav.json" | transform.Unmarshal }}
+<dialog id="sgx-drawer" class="sgx-drawer" aria-label="{{ cond $isEn $shellNav.label.en $shellNav.label.zh }}">
+  <nav class="sgx-drawer-sheet">
+    {{/* 抽屉头 = 字标（nav.json wordmark）+ 右边的头像圆（共享外壳 .sgx-drawer-me，52px，连外环）：点了去主站账号页（英文页去 /en/ 下） */}}
+    {{ $me := $shellNav.me.href }}{{ if $isEn }}{{ $me = replace $me "https://styrigx.com/" "https://styrigx.com/en/" }}{{ end }}
+    <div class="sgx-drawer-head"><span class="sgx-drawer-brand">{{ $shellNav.wordmark | safeHTML }}</span><a class="sgx-drawer-me" href="{{ $me }}" aria-label="{{ cond $isEn $shellNav.me.en $shellNav.me.zh }}"><img src="{{ $shellNav.me.avatar }}" alt="" width="52" height="52"></a></div>
+    <div class="sgx-drawer-body">
+    <ul class="sgx-drawer-list">
+      {{ range $shellNav.items }}
+      <li><a class="sgx-drawer-item" href="{{ partial "shell-nav-href.html" (dict "it" . "en" $isEn) }}" data-nav="{{ .id }}"><span class="sgx-drawer-ic">{{ index $shellNav.icons .icon | safeHTML }}</span><span class="sgx-drawer-label">{{ cond $isEn .en .zh }}</span></a></li>
+      {{ end }}
+    </ul>
+    <hr class="sgx-drawer-sep" aria-hidden="true">
+    {{ with $shellNav.footer }}
+    <hr class="sgx-drawer-div">
+    <ul class="sgx-drawer-list">
+      {{ range . }}
+      <li><a class="sgx-drawer-item" href="{{ partial "shell-nav-href.html" (dict "it" . "en" $isEn) }}" data-nav="{{ .id }}"><span class="sgx-drawer-ic">{{ index $shellNav.icons .icon | safeHTML }}</span><span class="sgx-drawer-label">{{ cond $isEn .en .zh }}</span></a></li>
+      {{ end }}
+    </ul>
+    {{ end }}
+    </div>
+    {{ $sp := $shellNav.search.path }}{{ if $isEn }}{{ $sp = printf "/en%s" $sp }}{{ end }}
+    <div class="sgx-drawer-foot"><a class="sgx-drawer-search" href="{{ $shellNav.search.origin }}{{ $sp }}" aria-label="{{ cond $isEn $shellNav.search.en $shellNav.search.zh }}"><span class="sgx-drawer-search-ic">{{ index $shellNav.icons $shellNav.search.icon | safeHTML }}</span><span class="sgx-drawer-search-label" aria-hidden="true">{{ cond $isEn $shellNav.search.en $shellNav.search.zh }}</span></a></div>
+  </nav>
+</dialog>
+
+{{/* 快捷面板（主站同一套 .sgx-qp 样式，quick-panel.js 开关）：深浅色、跟随系统、语言三个开关 + 三站和主站的快捷链接 */}}
+<dialog id="sgx-qp" class="sgx-qp" aria-label="{{ if $isEn }}Quick panel{{ else }}快捷面板{{ end }}">
+  <div class="sgx-qp-sheet" tabindex="-1" autofocus>
+    <div class="sgx-qp-grid">
+      <button type="button" class="sgx-qp-tile" data-qp="dark" aria-pressed="false"><span class="sgx-qp-ic">{{ partial "icon.html" "moon" }}</span><span class="sgx-qp-txt"><span class="sgx-qp-label">{{ if $isEn }}Dark mode{{ else }}深色模式{{ end }}</span><span class="sgx-qp-state" data-qp-state></span></span></button>
+      <button type="button" class="sgx-qp-tile" data-qp="system" aria-pressed="false"><span class="sgx-qp-ic">{{ partial "icon.html" "sun" }}</span><span class="sgx-qp-txt"><span class="sgx-qp-label">{{ if $isEn }}Follow system{{ else }}跟随系统{{ end }}</span><span class="sgx-qp-state" data-qp-state></span></span></button>
+      <button type="button" class="sgx-qp-tile" data-qp="lang"><span class="sgx-qp-ic">{{ partial "icon.html" "globe" }}</span><span class="sgx-qp-txt"><span class="sgx-qp-label">{{ if $isEn }}Language{{ else }}语言{{ end }}</span><span class="sgx-qp-state">{{ if $isEn }}中文{{ else }}English{{ end }}</span></span></button>
+    </div>
+    <div class="root-qp-links">
+      <a href="{{ if $isEn }}/blog/en/{{ else }}/blog/{{ end }}">{{ if $isEn }}Blog{{ else }}博客{{ end }}</a>
+      <a href="{{ if $isEn }}/curio/en/{{ else }}/curio/{{ end }}">{{ if $isEn }}Curio{{ else }}奇趣{{ end }}</a>
+      <a href="{{ if $isEn }}/daymark/en/{{ else }}/daymark/{{ end }}">{{ if $isEn }}Daymark{{ else }}日刻{{ end }}</a>
+      <a href="{{ if $isEn }}https://styrigx.com/en/{{ else }}https://styrigx.com{{ end }}">{{ if $isEn }}Space{{ else }}主站{{ end }}</a>
+    </div>
+  </div>
+</dialog>
+
+{{ block "main" . }}{{ end }}
+{{/* 顶栏：导航抽屉 + 快捷面板 */}}
+<script src="{{ (resources.Get "js/topbar.js" | minify | fingerprint).RelPermalink }}"></script>
+<script src="{{ (resources.Get "js/sgx/quick-panel.js" | minify | fingerprint).RelPermalink }}"></script>
+{{/* SGX 锁屏同步：切回前台 / bfcache 恢复时向服务端确认会话 */}}
+<script src="{{ (resources.Get "js/sgx-lock-sync.js" | minify | fingerprint).RelPermalink }}"></script>
+
+{{ block "pagejs" . }}{{ end }}
+</body>
+</html>

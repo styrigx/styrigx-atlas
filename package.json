@@ -17,7 +17,8 @@
   "workspaces": [
     "sites/blog",
     "sites/curio",
-    "sites/daymark"
+    "sites/daymark",
+    "sites/root"
   ],
   "scripts": {
     "build": "npm run build -ws && node scripts/assemble.mjs",
